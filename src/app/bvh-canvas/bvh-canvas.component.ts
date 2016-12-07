@@ -8,11 +8,8 @@ import { Rect } from '../g2d/util/rect';
 })
 export class BVHCanvasComponent implements OnInit, AfterContentChecked {
 
-  private graphLeft: number = 0;
-  private graphTop: number = 0;
   private graphWidth: number = 0;
   private graphHeight: number = 0;
-  private graphWidthLast: number = -1;
 
   constructor(private elementRef: ElementRef) { }
 

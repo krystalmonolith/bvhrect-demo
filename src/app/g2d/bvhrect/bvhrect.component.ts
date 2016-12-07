@@ -67,11 +67,11 @@ export class BVHRectComponent implements OnInit,OnChanges {
     .subscribe((e:MouseEvent) => {
       let x = e.offsetX;
       let y = e.offsetY;
-      console.log("MXY:(" + x + "," + y + ")")
+//      console.log("MXY:(" + x + "," + y + ")")
       if (this.cr.w > 0) {
         this.baseDelay = this.delayMin + (this.delayMax - this.delayMin) * Math.min(Math.max(0,x/this.cr.w),1);
         this.baseDelay = Math.max(1,Math.floor(this.baseDelay))
-        console.log("MOUSEDELAY: " + this.baseDelay);
+//        console.log("MOUSEDELAY: " + this.baseDelay);
         this.stopUpdate();
         this.startUpdate();
       }
@@ -81,7 +81,14 @@ export class BVHRectComponent implements OnInit,OnChanges {
   canvasClick(event:MouseEvent) {
     if (event.ctrlKey && !event.shiftKey) {
       this.splitEnable = false;
-      this.cr.splitRect(this.getGC(), this.cr.x, this.cr.y);
+      switch (this.phase) {
+        case 0:
+          this.cr.splitRect(this.getGC(), this.cr.x, this.cr.y);
+          break;
+        case 1:
+          this.cr.joinRect(this.getGC(), this.cr.x, this.cr.y);
+          break;
+      }
     } else if (event.ctrlKey && event.shiftKey) {
       this.updateClientRect();
       this.getGC().clearRect(this.cr.x, this.cr.y, this.cr.w, this.cr.h);
@@ -104,7 +111,7 @@ export class BVHRectComponent implements OnInit,OnChanges {
     }
     let ddelay = Math.floor(1000 * Math.exp(-exponent*.025)/Math.E);
     let cdelay = this.baseDelay + ddelay;
-    console.log("CDELAY: " + cdelay + " DDELAY: " + ddelay + " BASEDELAY: " + this.baseDelay + " EXPONENT: " + exponent)
+//    console.log("CDELAY: " + cdelay + " DDELAY: " + ddelay + " BASEDELAY: " + this.baseDelay + " EXPONENT: " + exponent)
     return cdelay;
   }
 
