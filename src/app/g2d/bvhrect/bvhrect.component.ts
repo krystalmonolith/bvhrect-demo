@@ -1,17 +1,17 @@
 import { Component, OnInit, OnChanges, Input, ViewChild, ElementRef } from '@angular/core';
 import { Observable, Subscription } from 'rxjs';
 
-import { BVHRect } from './bvhrect.model';
+import { BVHNode,Renderer } from './bvhrect.node';
 
 @Component({
   selector: 'g2d-bvhrect',
   templateUrl: './bvhrect.component.html',
   styleUrls: ['./bvhrect.component.scss']
 })
-export class BVHRectComponent implements OnInit,OnChanges {
+export class BVHRectComponent implements OnInit,OnChanges,Renderer {
 
   static readonly padPercent = 2;
-  static readonly padOuter = BVHRectComponent.padPercent / 200;
+  static readonly padOuter = BVHRectComponent.padPercent / 100 / 2;
   static readonly padInner = 1 - BVHRectComponent.padOuter * 2;
 
   @ViewChild("canvas") canvas:ElementRef;
@@ -29,19 +29,25 @@ export class BVHRectComponent implements OnInit,OnChanges {
 
   splitEnable:boolean = true;
 
-  cr:BVHRect;
+  model:BVHNode;
 
   updateSubscription:Subscription;
 
   constructor() {
+    this.updateClientRect();
+  }
+
+  ngOnInit() {
+    this.mouseDelay();
+    this.startUpdate();
+  }
+
+  ngOnChanges() {
+    this.updateClientRect();
   }
 
   getGC():CanvasRenderingContext2D {
     return this.canvas.nativeElement.getContext("2d");
-  }
-
-  ngOnChanges() {
-      this.updateClientRect();
   }
 
   toggleSplit():void {
@@ -49,13 +55,17 @@ export class BVHRectComponent implements OnInit,OnChanges {
   }
 
   updateClientRect() {
-      this.cr = new BVHRect(
-          this.graphWidth  * BVHRectComponent.padOuter/2,
-          this.graphHeight * BVHRectComponent.padOuter/2,
+      this.model = new BVHNode(
+          this.graphWidth  * BVHRectComponent.padOuter,
+          this.graphHeight * BVHRectComponent.padOuter,
           this.graphWidth  * BVHRectComponent.padInner,
           this.graphHeight * BVHRectComponent.padInner)
-        .randomFill().randomStroke();
-      this.cr.floor();
+
+      this.model.floor();
+
+      console.log("GWW:(" + this.graphWidth + "," + this.graphHeight + ")")
+      console.log("MODEL: " + this.model)
+
       this.iterations = 0;
       this.phase = 0;
   }
@@ -68,8 +78,8 @@ export class BVHRectComponent implements OnInit,OnChanges {
       let x = e.offsetX;
       let y = e.offsetY;
 //      console.log("MXY:(" + x + "," + y + ")")
-      if (this.cr.w > 0) {
-        this.baseDelay = this.delayMin + (this.delayMax - this.delayMin) * Math.min(Math.max(0,x/this.cr.w),1);
+      if (this.model.w > 0) {
+        this.baseDelay = this.delayMin + (this.delayMax - this.delayMin) * Math.min(Math.max(0,x/this.model.w),1);
         this.baseDelay = Math.max(1,Math.floor(this.baseDelay))
 //        console.log("MOUSEDELAY: " + this.baseDelay);
         this.stopUpdate();
@@ -83,29 +93,25 @@ export class BVHRectComponent implements OnInit,OnChanges {
       this.splitEnable = false;
       switch (this.phase) {
         case 0:
-          this.cr.splitRect(this.getGC(), this.cr.x, this.cr.y);
+          this.model.splitNode(this);
           break;
         case 1:
-          this.cr.joinRect(this.getGC(), this.cr.x, this.cr.y);
+          this.model.joinNode(this);
           break;
       }
     } else if (event.ctrlKey && event.shiftKey) {
       this.updateClientRect();
-      this.getGC().clearRect(this.cr.x, this.cr.y, this.cr.w, this.cr.h);
+      this.getGC().clearRect(this.model.x, this.model.y, this.model.w, this.model.h);
     } else if (!event.shiftKey){
       this.toggleSplit();
     }
   }
 
-  ngOnInit() {
-    this.mouseDelay();
-    this.startUpdate();
-  }
 
   calculateDelay():number {
     let exponent:number;
     if (this.phase == 1) {
-      exponent = this.cr.countChildren();
+      exponent = this.model.countChildren();
     } else {
       exponent = this.iterations;
     }
@@ -118,8 +124,6 @@ export class BVHRectComponent implements OnInit,OnChanges {
   startUpdate() {
     this.updateSubscription = Observable.of(0).delay(this.calculateDelay()).subscribe(
       cnt => {
-        let cr = this.cr;
-        let ctx = this.getGC();
         if (this.splitEnable) {
           switch (this.phase) {
             case 0:
@@ -128,12 +132,12 @@ export class BVHRectComponent implements OnInit,OnChanges {
                 this.phase = 1;
               } else {
                 let splitTries = BVHRectComponent.maxSplitTries;
-                while (!cr.splitRect(ctx, cr.x, cr.y) && --splitTries <= 0 );
+                while (!this.model.splitNode(this) && --splitTries <= 0 );
               }
               break;
             case 1:
               for (let i=0; i<2 && this.phase == 1; i++) {
-                if (cr.joinRect(ctx, cr.x, cr.y) == 0) {
+                if (this.model.joinNode(this) == 0) {
                   this.phase = 2;
                 }
               }
@@ -142,7 +146,7 @@ export class BVHRectComponent implements OnInit,OnChanges {
               this.splitEnable = false;
               Observable.of(0).delay(1000).subscribe(n => {
                 this.phase = 0;
-                ctx.clearRect(cr.x, cr.y, cr.w, cr.h);
+                this.getGC().clearRect(this.model.x, this.model.y, this.model.w, this.model.h);
                 this.splitEnable = true;
               });
               break;
@@ -160,5 +164,13 @@ export class BVHRectComponent implements OnInit,OnChanges {
       this.updateSubscription.unsubscribe();
       this.updateSubscription = null;
     }
+  }
+
+  render(rect:BVHNode) {
+      let ctx = this.getGC();
+      ctx.fillStyle = rect.fill;
+      ctx.strokeStyle = rect.stroke;
+      ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+      ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
   }
 }
