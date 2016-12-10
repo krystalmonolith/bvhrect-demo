@@ -3,7 +3,7 @@ import { BVHRect } from './bvhrect';
 
 const minDimension:number = 4;
 
-export interface Renderer {
+export interface BVHRenderer {
    render(node:BVHNode):void;
 }
 
@@ -80,7 +80,7 @@ export class BVHNode extends BVHRect {
     }
   }
 
-  splitNode(renderer:Renderer):boolean {
+  splitNode(renderer:BVHRenderer):boolean {
     let s = this.size();
     if (s == 0) {
       let rv = this.splitRandom();  // Terminal condition.
@@ -93,7 +93,7 @@ export class BVHNode extends BVHRect {
     }
   }
 
-  joinNode(renderer:Renderer):number {
+  joinNode(renderer:BVHRenderer):number {
     let childrenRemoved = 0;
     let s = this.size();
     if (s > 0) {

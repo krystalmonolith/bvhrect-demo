@@ -1,7 +1,7 @@
 import { Component, OnInit, OnChanges, Input, ViewChild, ElementRef } from '@angular/core';
 import { Observable, Subscription } from 'rxjs';
 
-import { BVHNode,Renderer } from './bvhrect.node';
+import { BVHNode,BVHRenderer } from './bvhrect.node';
 
 enum Phase {
   PHASE_SPLIT_NODES,
@@ -14,7 +14,7 @@ enum Phase {
   templateUrl: './bvhrect.component.html',
   styleUrls: ['./bvhrect.component.scss']
 })
-export class BVHRectComponent implements OnInit,OnChanges,Renderer {
+export class BVHRectComponent implements OnInit,OnChanges,BVHRenderer {
 
   @ViewChild("canvas") canvas:ElementRef;
   @Input() graphWidth: number = 0;
