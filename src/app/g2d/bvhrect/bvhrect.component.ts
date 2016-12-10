@@ -3,6 +3,12 @@ import { Observable, Subscription } from 'rxjs';
 
 import { BVHNode,Renderer } from './bvhrect.node';
 
+enum Phase {
+  PHASE_SPLIT_NODES,
+  PHASE_JOIN_NODES,
+  PHASE_INTERMISSION
+}
+
 @Component({
   selector: 'g2d-bvhrect',
   templateUrl: './bvhrect.component.html',
@@ -10,28 +16,40 @@ import { BVHNode,Renderer } from './bvhrect.node';
 })
 export class BVHRectComponent implements OnInit,OnChanges,Renderer {
 
-  static readonly padPercent = 2;
-  static readonly padOuter = BVHRectComponent.padPercent / 100 / 2;
-  static readonly padInner = 1 - BVHRectComponent.padOuter * 2;
-
   @ViewChild("canvas") canvas:ElementRef;
   @Input() graphWidth: number = 0;
   @Input() graphHeight:number = 0;
 
-  delayMin:number = 1;
-  delayMax:number = 1000;
-  baseDelay: number = this.delayMin;
+  static readonly mouseDebounceMsec = 20;
+
+  static readonly padPercent = 2;
+  static readonly padOuter = BVHRectComponent.padPercent / 100 / 2;
+  static readonly padInner = 1 - BVHRectComponent.padOuter * 2;
 
   static readonly maxSplitTries:number = 10;
+  static readonly maxJoinTries:number  = 2;
+
+  // dynamic delay
+  static readonly delayK1 = 1000/Math.E;
+  static readonly delayK2 = 0.025;
+
+  // baseDelay
+  static readonly delayMin:number = 1;
+  static readonly delayMax:number = 1000;
+  static readonly delayIntermission:number = 1000;
+
   static readonly maxIterations:number = 5000;
+
+
+  // Update loop state varables
   iterations:number = BVHRectComponent.maxIterations;
-  phase:number = 0;
-
-  splitEnable:boolean = true;
-
-  model:BVHNode;
-
+  baseDelay:number = BVHRectComponent.delayMin;
+  refreshEnable:boolean = true;
   updateSubscription:Subscription;
+  phase:number = Phase.PHASE_SPLIT_NODES;
+
+  // Root node of the BVH tree...
+  model:BVHNode;
 
   constructor() {
     this.updateClientRect();
@@ -51,7 +69,7 @@ export class BVHRectComponent implements OnInit,OnChanges,Renderer {
   }
 
   toggleSplit():void {
-    this.splitEnable = !this.splitEnable;
+    this.refreshEnable = !this.refreshEnable;
   }
 
   updateClientRect() {
@@ -67,21 +85,20 @@ export class BVHRectComponent implements OnInit,OnChanges,Renderer {
       console.log("MODEL: " + this.model)
 
       this.iterations = 0;
-      this.phase = 0;
+      this.baseDelay = BVHRectComponent.delayMin;
+      this.phase = Phase.PHASE_SPLIT_NODES;
   }
 
   mouseDelay() {
     Observable.fromEvent(this.canvas.nativeElement, 'mousemove')
-    .filter((e:MouseEvent, i:number) => { return e.shiftKey; })
-    .debounceTime(20)
+    .filter((e:MouseEvent, i:number) => { return e.shiftKey && !e.ctrlKey; })
+    .debounceTime(BVHRectComponent.mouseDebounceMsec)
     .subscribe((e:MouseEvent) => {
       let x = e.offsetX;
       let y = e.offsetY;
-//      console.log("MXY:(" + x + "," + y + ")")
       if (this.model.w > 0) {
-        this.baseDelay = this.delayMin + (this.delayMax - this.delayMin) * Math.min(Math.max(0,x/this.model.w),1);
+        this.baseDelay = BVHRectComponent.delayMin + (BVHRectComponent.delayMax - BVHRectComponent.delayMin) * Math.min(Math.max(0,x/this.model.w),1);
         this.baseDelay = Math.max(1,Math.floor(this.baseDelay))
-//        console.log("MOUSEDELAY: " + this.baseDelay);
         this.stopUpdate();
         this.startUpdate();
       }
@@ -90,12 +107,12 @@ export class BVHRectComponent implements OnInit,OnChanges,Renderer {
 
   canvasClick(event:MouseEvent) {
     if (event.ctrlKey && !event.shiftKey) {
-      this.splitEnable = false;
+      this.refreshEnable = false;
       switch (this.phase) {
-        case 0:
+        case Phase.PHASE_SPLIT_NODES:
           this.model.splitNode(this);
           break;
-        case 1:
+        case Phase.PHASE_JOIN_NODES:
           this.model.joinNode(this);
           break;
       }
@@ -110,50 +127,57 @@ export class BVHRectComponent implements OnInit,OnChanges,Renderer {
 
   calculateDelay():number {
     let exponent:number;
-    if (this.phase == 1) {
-      exponent = this.model.countChildren();
-    } else {
+    switch (this.phase) {
+      case Phase.PHASE_SPLIT_NODES:
       exponent = this.iterations;
+        break;
+      case Phase.PHASE_JOIN_NODES:
+      exponent = this.model.countChildren();
+        break;
+      default:
+        return this.baseDelay;
     }
-    let ddelay = Math.floor(1000 * Math.exp(-exponent*.025)/Math.E);
+    let ddelay = Math.floor(BVHRectComponent.delayK1 * Math.exp(-exponent * BVHRectComponent.delayK2)); // Note the *negative* exponent!
     let cdelay = this.baseDelay + ddelay;
-//    console.log("CDELAY: " + cdelay + " DDELAY: " + ddelay + " BASEDELAY: " + this.baseDelay + " EXPONENT: " + exponent)
     return cdelay;
   }
 
   startUpdate() {
     this.updateSubscription = Observable.of(0).delay(this.calculateDelay()).subscribe(
       cnt => {
-        if (this.splitEnable) {
+        if (this.refreshEnable) {
           switch (this.phase) {
-            case 0:
+            case Phase.PHASE_SPLIT_NODES:
               if (++this.iterations >= BVHRectComponent.maxIterations) {
                 this.iterations = 0;
-                this.phase = 1;
+                this.phase = Phase.PHASE_JOIN_NODES;
               } else {
                 let splitTries = BVHRectComponent.maxSplitTries;
                 while (!this.model.splitNode(this) && --splitTries <= 0 );
               }
               break;
-            case 1:
-              for (let i=0; i<2 && this.phase == 1; i++) {
+            case Phase.PHASE_JOIN_NODES:
+              for (let i=0; i<BVHRectComponent.maxJoinTries && this.phase == 1; i++) {
                 if (this.model.joinNode(this) == 0) {
-                  this.phase = 2;
+                  this.phase = Phase.PHASE_INTERMISSION;
                 }
               }
               break;
-            case 2:
-              this.splitEnable = false;
-              Observable.of(0).delay(1000).subscribe(n => {
-                this.phase = 0;
+            case Phase.PHASE_INTERMISSION:
+              this.refreshEnable = false;
+              Observable.of(0).delay(BVHRectComponent.delayIntermission).subscribe(n => {
                 this.getGC().clearRect(this.model.x, this.model.y, this.model.w, this.model.h);
-                this.splitEnable = true;
+                this.phase = Phase.PHASE_SPLIT_NODES;
+                this.refreshEnable = true;
               });
               break;
             default:
               throw "Illegal phase: " + this.phase;
           }
         }
+        // Kick off the next update... recuraively. Seems evil until you remember it exits after calculating/starting next delay and subscribe-ing.
+        // Cannot use Observable.interval(ourDelay):
+        // Must update ourDelay period each iteration using Observable.of(0).delay(ourDelay).
         this.startUpdate();
       }
     )
