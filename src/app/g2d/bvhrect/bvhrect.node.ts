@@ -42,7 +42,8 @@ export class BVHNode extends BVHRect {
 
   randomColors():void {
     this.randomFill();
-    this.randomStroke();
+    //his.randomStroke();
+    this.stroke = "rgba(255,255,255,1)"
   }
 
   allChildren(cfunc:(rchild:BVHNode) => any) {
@@ -100,16 +101,11 @@ export class BVHNode extends BVHRect {
       let child:BVHNode = this.randomChild();
       childrenRemoved = child.joinNode(renderer);
       if (childrenRemoved == 0) {
-        if (this.size() == 0) {
-          this.stroke = "rgba(0,0,0,1)"
-          renderer.render(this);
-        } else {
           child.fill = this.fill;
-          child.stroke = "rgba(255,255,255,1)"
+          child.stroke = "rgba(0,0,0,1)"
           renderer.render(child);
-        }
-        this.removeChild(child);
-        childrenRemoved++;
+          this.removeChild(child);
+          childrenRemoved++;
       }
     }
     return childrenRemoved;
