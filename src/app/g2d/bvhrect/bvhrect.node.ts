@@ -42,8 +42,7 @@ export class BVHNode extends BVHRect {
 
   randomColors():void {
     this.randomFill();
-    //his.randomStroke();
-    this.stroke = "rgba(255,255,255,1)"
+    this.randomStroke();
   }
 
   allChildren(cfunc:(rchild:BVHNode) => any) {
@@ -60,7 +59,7 @@ export class BVHNode extends BVHRect {
     return acc;
   }
 
-  splitRandom():boolean {
+  splitRandom(strokeColor:string="rgba(255,255,255,1)"):boolean {
     const [splitMin, splitMax] = [0.25, 0.75]; // Minimum/Maximum split are 25%/75% of width and height
     let [wmin,hmin] = [this.w * splitMin,
                        this.h * splitMin];
@@ -74,35 +73,38 @@ export class BVHNode extends BVHRect {
       this.addChild(new BVHNode(this.x + splitx, this.y,          this.w-splitx, splity-1));
       this.addChild(new BVHNode(this.x,          this.y + splity, splitx-1     , this.h-splity));
       this.addChild(new BVHNode(this.x + splitx, this.y + splity, this.w-splitx, this.h-splity));
-      this.randomizeAllChildren();
+      this.allChildren(child => {
+        child.stroke = strokeColor;
+        child.fill = Rand.colorRand();
+      });
       return true;
     } else {
       return false;
     }
   }
 
-  splitNode(renderer:BVHRenderer):boolean {
+  splitNode(renderer:BVHRenderer, strokeColor:string="rgba(255,255,255,1)"):boolean {
     let s = this.size();
     if (s == 0) {
-      let rv = this.splitRandom();  // Terminal condition.
+      let rv = this.splitRandom(strokeColor);  // Terminal condition.
       if (rv) {
         this.allChildren(child => { renderer.render(child); });
       }
       return rv;
     } else {
-      return this.randomChild().splitNode(renderer);
+      return this.randomChild().splitNode(renderer, strokeColor);
     }
   }
 
-  joinNode(renderer:BVHRenderer):number {
+  joinNode(renderer:BVHRenderer, strokeColor:string="rgba(0,0,0,1)"):number {
     let childrenRemoved = 0;
     let s = this.size();
     if (s > 0) {
       let child:BVHNode = this.randomChild();
-      childrenRemoved = child.joinNode(renderer);
+      childrenRemoved = child.joinNode(renderer, strokeColor);
       if (childrenRemoved == 0) {
           child.fill = this.fill;
-          child.stroke = "rgba(0,0,0,1)"
+          child.stroke = strokeColor;
           renderer.render(child);
           this.removeChild(child);
           childrenRemoved++;

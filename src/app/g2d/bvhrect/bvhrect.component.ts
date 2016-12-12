@@ -1,13 +1,17 @@
 import { Component, OnInit, OnChanges, Input, ViewChild, ElementRef } from '@angular/core';
 import { Observable, Subscription } from 'rxjs';
 
+import { Rand } from '../util/rand';
 import { BVHNode,BVHRenderer } from './bvhrect.node';
 
 enum Phase {
-  PHASE_SPLIT_NODES,
-  PHASE_JOIN_NODES,
-  PHASE_INTERMISSION
+  SPLIT,
+  DANCE,
+  JOIN,
+  INTERMISSION
 }
+
+
 
 @Component({
   selector: 'g2d-bvhrect',
@@ -26,6 +30,8 @@ export class BVHRectComponent implements OnInit,OnChanges,BVHRenderer {
   static readonly padOuter = BVHRectComponent.padPercent / 100 / 2;
   static readonly padInner = 1 - BVHRectComponent.padOuter * 2;
 
+  static readonly statusLineHeight = 20;
+
   static readonly maxSplitTries:number = 10;
   static readonly maxJoinTries:number  = 2;
 
@@ -38,18 +44,20 @@ export class BVHRectComponent implements OnInit,OnChanges,BVHRenderer {
   static readonly delayMax:number = 1000;
   static readonly delayIntermission:number = 1000;
 
-  static readonly maxIterations:number = 5000;
-
+  static readonly maxIterations:number = 10000;
+  static readonly maxDanceIterations:number = BVHRectComponent.maxIterations * 3;
 
   // Update loop state varables
   iterations:number = BVHRectComponent.maxIterations;
   baseDelay:number = BVHRectComponent.delayMin;
   refreshEnable:boolean = true;
   updateSubscription:Subscription;
-  phase:number = Phase.PHASE_SPLIT_NODES;
+  phase:Phase = Phase.SPLIT;
 
   // Root node of the BVH tree...
   model:BVHNode;
+  currentNodes:number = 0;
+  maxNodes:number = 0;
 
   constructor() {
     this.updateClientRect();
@@ -77,16 +85,12 @@ export class BVHRectComponent implements OnInit,OnChanges,BVHRenderer {
           this.graphWidth  * BVHRectComponent.padOuter,
           this.graphHeight * BVHRectComponent.padOuter,
           this.graphWidth  * BVHRectComponent.padInner,
-          this.graphHeight * BVHRectComponent.padInner)
-
+          this.graphHeight * BVHRectComponent.padInner - BVHRectComponent.statusLineHeight);
       this.model.floor();
-
-      console.log("GWW:(" + this.graphWidth + "," + this.graphHeight + ")")
-      console.log("MODEL: " + this.model)
-
       this.iterations = 0;
       this.baseDelay = BVHRectComponent.delayMin;
-      this.phase = Phase.PHASE_SPLIT_NODES;
+      this.phase = Phase.SPLIT;
+      this.maxNodes = 0;
   }
 
   mouseDelay() {
@@ -109,10 +113,13 @@ export class BVHRectComponent implements OnInit,OnChanges,BVHRenderer {
     if (event.ctrlKey && !event.shiftKey) {
       this.refreshEnable = false;
       switch (this.phase) {
-        case Phase.PHASE_SPLIT_NODES:
+        case Phase.SPLIT:
           this.model.splitNode(this);
           break;
-        case Phase.PHASE_JOIN_NODES:
+        case Phase.DANCE:
+          this.letsDance();
+          break;
+        case Phase.JOIN:
           this.model.joinNode(this);
           break;
       }
@@ -124,63 +131,80 @@ export class BVHRectComponent implements OnInit,OnChanges,BVHRenderer {
     }
   }
 
-
   calculateDelay():number {
     let exponent:number;
     switch (this.phase) {
-      case Phase.PHASE_SPLIT_NODES:
-      exponent = this.iterations;
-        break;
-      case Phase.PHASE_JOIN_NODES:
-      exponent = this.model.countChildren();
-        break;
+      case Phase.SPLIT:
+      case Phase.JOIN:
+        exponent = this.currentNodes;
+        let ddelay = Math.floor(BVHRectComponent.delayK1 * Math.exp(-exponent * BVHRectComponent.delayK2)); // Note the *negative* exponent!
+        let cdelay = this.baseDelay + ddelay;
+        return cdelay;
       default:
         return this.baseDelay;
     }
-    let ddelay = Math.floor(BVHRectComponent.delayK1 * Math.exp(-exponent * BVHRectComponent.delayK2)); // Note the *negative* exponent!
-    let cdelay = this.baseDelay + ddelay;
-    return cdelay;
+  }
+
+  doUpdate():void {
+    let ctx = this.getGC();
+    ctx.save();
+    if (this.refreshEnable) {
+      switch (this.phase) {
+        case Phase.SPLIT:
+          if (++this.iterations >= BVHRectComponent.maxIterations) {
+            this.iterations = 0;
+            this.phase = Phase.DANCE;
+            this.maxNodes = this.currentNodes;
+          } else {
+            this.split();
+          }
+          break;
+        case Phase.DANCE:
+          if (++this.iterations >= BVHRectComponent.maxDanceIterations) {
+            this.iterations = 0;
+            this.phase = Phase.JOIN;
+          } else {
+            this.letsDance();
+          }
+          break;
+        case Phase.JOIN:
+          this.join();
+          break;
+        case Phase.INTERMISSION:
+          this.refreshEnable = false;
+          Observable.of(0).delay(BVHRectComponent.delayIntermission).subscribe(n => {
+            ctx.clearRect(this.model.x, this.model.y, this.model.w, this.model.h);
+            this.phase = Phase.SPLIT;
+            this.refreshEnable = true;
+          });
+          break;
+        default:
+          throw "Illegal phase: " + this.phase;
+      } // endswitch (this.phase)
+      this.currentNodes = this.model.countChildren();
+      let phaseString = Phase[this.phase];
+      this.renderStatusLine([ phaseString, this.currentNodes.toString() ])
+    } // endif refreshEnable
+
+    // Kick off the next update... recursively!
+    // Seems evil until you remember it exits after calculating
+    // and starting the next delay and subscribe-ing.
+    //
+    // Cannot use Observable.interval(ourDelay) since it
+    // only looks at the ourDelay period value once.
+    //
+    // We must update ourDelay period value each iteration
+    // using Observable.of(0).delay(this.calculateDelay()).
+    this.startUpdate();
+    ctx.restore();
   }
 
   startUpdate() {
-    this.updateSubscription = Observable.of(0).delay(this.calculateDelay()).subscribe(
-      cnt => {
-        if (this.refreshEnable) {
-          switch (this.phase) {
-            case Phase.PHASE_SPLIT_NODES:
-              if (++this.iterations >= BVHRectComponent.maxIterations) {
-                this.iterations = 0;
-                this.phase = Phase.PHASE_JOIN_NODES;
-              } else {
-                let splitTries = BVHRectComponent.maxSplitTries;
-                while (!this.model.splitNode(this) && --splitTries <= 0 );
-              }
-              break;
-            case Phase.PHASE_JOIN_NODES:
-              for (let i=0; i<BVHRectComponent.maxJoinTries && this.phase == 1; i++) {
-                if (this.model.joinNode(this) == 0) {
-                  this.phase = Phase.PHASE_INTERMISSION;
-                }
-              }
-              break;
-            case Phase.PHASE_INTERMISSION:
-              this.refreshEnable = false;
-              Observable.of(0).delay(BVHRectComponent.delayIntermission).subscribe(n => {
-                this.getGC().clearRect(this.model.x, this.model.y, this.model.w, this.model.h);
-                this.phase = Phase.PHASE_SPLIT_NODES;
-                this.refreshEnable = true;
-              });
-              break;
-            default:
-              throw "Illegal phase: " + this.phase;
-          }
-        }
-        // Kick off the next update... recuraively. Seems evil until you remember it exits after calculating/starting next delay and subscribe-ing.
-        // Cannot use Observable.interval(ourDelay):
-        // Must update ourDelay period each iteration using Observable.of(0).delay(ourDelay).
-        this.startUpdate();
-      }
-    )
+    this.updateSubscription =
+      Observable
+      .of(0)
+      .delay(this.calculateDelay())
+      .subscribe(notused => this.doUpdate());
   }
 
   stopUpdate() {
@@ -190,11 +214,71 @@ export class BVHRectComponent implements OnInit,OnChanges,BVHRenderer {
     }
   }
 
-  render(rect:BVHNode) {
+  split(strokeColor:string=Rand.colorRand()):void {
+    let splitTries = BVHRectComponent.maxSplitTries;
+    while (!this.model.splitNode(this, strokeColor) && --splitTries <= 0 );
+  }
+
+  join(strokeColor:string="rgba(0,0,0,1)"):void {
+    let startPhase = this.phase;
+    for (let i=0; i<BVHRectComponent.maxJoinTries && this.phase == startPhase; i++) {
+      if (this.model.joinNode(this, strokeColor) == 0) {
+        this.phase = Phase.INTERMISSION;
+      }
+    }
+  }
+
+  letsDance(): void {
+    let dnodes = this.maxNodes - this.currentNodes;
+    if (dnodes > 0) {
+      this.split("rgba(255,204,0,1)");
+    } else {
+      this.join("rgba(0,0,255,1)");
+    }
+  }
+
+  // Implementation of BVHRenderer.render(rect:BVHNode)
+  // All rectangle painting occurs here, controlled by the model.
+  render(rect:BVHNode):void {
       let ctx = this.getGC();
       ctx.fillStyle = rect.fill;
       ctx.strokeStyle = rect.stroke;
       ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
       ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+  }
+
+  renderStatusLine(txt:string[],
+                   font:string="16px Impact",
+                   fillStyle:string="rgba(255,255,255,1)",
+                   strokeStyle:string="rgba(255,255,255,1)",
+                   bgStyle:string="rgba(0,0,0,1)",
+                   lineWidth:number=0.5):void {
+    let ctx = this.getGC();
+    ctx.save();
+    let spacing = 2;
+    let xoff:number = spacing;
+    let bgh = BVHRectComponent.statusLineHeight;
+    let bgy = Math.floor(this.graphHeight - bgh - spacing);
+    ctx.clearRect(this.model.x, bgy, this.model.w, bgh);
+    let y = bgy + 2 * spacing;
+    ctx.font = font;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    ctx.lineWidth = lineWidth;
+    txt.forEach(t => {
+      let metrics:TextMetrics = ctx.measureText(t);
+      let bgx = this.model.x + xoff;
+      let x = bgx + spacing;
+      let bgw = metrics.width + spacing * 2;
+      let w = metrics.width;
+      ctx.fillStyle = bgStyle;
+      ctx.fillRect(bgx, bgy, bgw, bgh);
+      ctx.fillStyle = fillStyle;
+      ctx.fillText(t, x, y);
+      ctx.strokeStyle = strokeStyle;
+      ctx.strokeText(t, x, y);
+      xoff += bgw + spacing * 2;
+    });
+    ctx.restore();
   }
 }
