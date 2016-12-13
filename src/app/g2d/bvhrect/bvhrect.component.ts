@@ -2,7 +2,7 @@ import { Component, OnInit, OnChanges, Input, ViewChild, ElementRef } from '@ang
 import { Observable, Subscription } from 'rxjs';
 
 import { Rand } from '../util/rand';
-import { BVHNode,BVHRenderer } from './bvhrect.node';
+import { BVHNode, BVHRenderer, MaxAreaNode } from './bvhrect.node';
 
 enum Phase {
   SPLIT,
@@ -11,7 +11,12 @@ enum Phase {
   INTERMISSION
 }
 
-
+class SplitBiggestStatus {
+  constructor(public readonly split:boolean, public readonly maxAreaNode:MaxAreaNode) {}
+  toString():string {
+    return "{ split: " + this.split + " " + this.maxAreaNode.toString() + "}"
+  }
+}
 
 @Component({
   selector: 'g2d-bvhrect',
@@ -44,11 +49,10 @@ export class BVHRectComponent implements OnInit,OnChanges,BVHRenderer {
   static readonly delayMax:number = 1000;
   static readonly delayIntermission:number = 1000;
 
-  static readonly maxIterations:number = 10000;
-  static readonly maxDanceIterations:number = BVHRectComponent.maxIterations * 3;
+  static readonly maxNodesPerCycle:number = 2000;
+  static readonly danceIterationMultiplier:number = 5;
 
   // Update loop state varables
-  iterations:number = BVHRectComponent.maxIterations;
   baseDelay:number = BVHRectComponent.delayMin;
   refreshEnable:boolean = true;
   updateSubscription:Subscription;
@@ -87,7 +91,6 @@ export class BVHRectComponent implements OnInit,OnChanges,BVHRenderer {
           this.graphWidth  * BVHRectComponent.padInner,
           this.graphHeight * BVHRectComponent.padInner - BVHRectComponent.statusLineHeight);
       this.model.floor();
-      this.iterations = 0;
       this.baseDelay = BVHRectComponent.delayMin;
       this.phase = Phase.SPLIT;
       this.maxNodes = 0;
@@ -129,6 +132,16 @@ export class BVHRectComponent implements OnInit,OnChanges,BVHRenderer {
     } else if (!event.shiftKey){
       this.toggleSplit();
     }
+    this.updateStatusLine();
+  }
+
+  updateStatusLine():void {
+    this.currentNodes = this.model.countChildren();
+    let states = [ Phase[this.phase], this.currentNodes.toString() ];
+    if (!this.refreshEnable) {
+      states.push("PAUSE");
+    }
+    this.renderStatusLine(states);
   }
 
   calculateDelay():number {
@@ -151,17 +164,15 @@ export class BVHRectComponent implements OnInit,OnChanges,BVHRenderer {
     if (this.refreshEnable) {
       switch (this.phase) {
         case Phase.SPLIT:
-          if (++this.iterations >= BVHRectComponent.maxIterations) {
-            this.iterations = 0;
+          if (++this.currentNodes >= BVHRectComponent.maxNodesPerCycle) {
             this.phase = Phase.DANCE;
             this.maxNodes = this.currentNodes;
           } else {
-            this.split();
+            this.splitRandom();
           }
           break;
         case Phase.DANCE:
-          if (++this.iterations >= BVHRectComponent.maxDanceIterations) {
-            this.iterations = 0;
+          if (this.currentNodes >= BVHRectComponent.danceIterationMultiplier * this.maxNodes) {
             this.phase = Phase.JOIN;
           } else {
             this.letsDance();
@@ -181,9 +192,7 @@ export class BVHRectComponent implements OnInit,OnChanges,BVHRenderer {
         default:
           throw "Illegal phase: " + this.phase;
       } // endswitch (this.phase)
-      this.currentNodes = this.model.countChildren();
-      let phaseString = Phase[this.phase];
-      this.renderStatusLine([ phaseString, this.currentNodes.toString() ])
+      this.updateStatusLine();
     } // endif refreshEnable
 
     // Kick off the next update... recursively!
@@ -214,9 +223,19 @@ export class BVHRectComponent implements OnInit,OnChanges,BVHRenderer {
     }
   }
 
-  split(strokeColor:string=Rand.colorRand()):void {
+//  splitRandom(strokeColor:string=Rand.colorRand()):void {
+  splitRandom(strokeColor:string="rgba(255,255,255,1)"):void {
     let splitTries = BVHRectComponent.maxSplitTries;
     while (!this.model.splitNode(this, strokeColor) && --splitTries <= 0 );
+  }
+
+  splitBiggest(strokeColor:string=Rand.colorRand()):SplitBiggestStatus {
+    let maxAreaNode:MaxAreaNode = this.model.maxAreaChild();
+    let rv:boolean = false
+    for (let splitTries = BVHRectComponent.maxSplitTries; !rv && splitTries > 0; splitTries--) {
+      rv = maxAreaNode.maxAreaNode.splitRandom(this, strokeColor);
+    }
+    return new SplitBiggestStatus(rv, maxAreaNode);
   }
 
   join(strokeColor:string="rgba(0,0,0,1)"):void {
@@ -229,9 +248,18 @@ export class BVHRectComponent implements OnInit,OnChanges,BVHRenderer {
   }
 
   letsDance(): void {
-    let dnodes = this.maxNodes - this.currentNodes;
-    if (dnodes > 0) {
-      this.split("rgba(255,204,0,1)");
+    // let dnodes = this.maxNodes - this.currentNodes;
+    // if (dnodes > 0) {
+    if (Rand.rand(0,20)) {
+      let splitStat:SplitBiggestStatus = this.splitBiggest("rgba(255,0,0,1)");
+      console.log("SS: " + splitStat);
+      if (!splitStat.split) {
+        if (splitStat.maxAreaNode.maxAreaParentNode) {
+          splitStat.maxAreaNode.maxAreaParentNode.joinNode(this, "rgba(0,0,0,1)");
+        // } else {
+        //   this.join("rgba(0,0,0,1)");
+        }
+      }
     } else {
       this.join("rgba(0,0,255,1)");
     }
@@ -239,12 +267,28 @@ export class BVHRectComponent implements OnInit,OnChanges,BVHRenderer {
 
   // Implementation of BVHRenderer.render(rect:BVHNode)
   // All rectangle painting occurs here, controlled by the model.
-  render(rect:BVHNode):void {
+  renderRect(rect:BVHNode):void {
       let ctx = this.getGC();
       ctx.fillStyle = rect.fill;
       ctx.strokeStyle = rect.stroke;
       ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
       ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+  }
+
+  renderX(rect:BVHNode):void {
+      let ctx = this.getGC();
+      ctx.fillStyle = "#FFFFFF";
+      ctx.strokeStyle = "#000000";
+      ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+      ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+      ctx.beginPath();
+      ctx.moveTo(rect.x,rect.y);
+      ctx.lineTo(rect.x+rect.w-1, rect.y+rect.h-1);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(rect.x+rect.w-1, rect.y);
+      ctx.lineTo(rect.x, rect.y+rect.h-1);
+      ctx.stroke();
   }
 
   renderStatusLine(txt:string[],

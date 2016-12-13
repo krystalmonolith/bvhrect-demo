@@ -4,7 +4,16 @@ import { BVHRect } from './bvhrect';
 const minDimension:number = 4;
 
 export interface BVHRenderer {
-   render(node:BVHNode):void;
+   renderRect(node:BVHNode):void;
+   renderX(node:BVHNode):void;
+}
+
+export class MaxAreaNode {
+  constructor(public area:number, public readonly maxAreaNode:BVHNode, public readonly maxAreaParentNode:BVHNode) {}
+
+  toString():string {
+    return "{ area:" + this.area + " maxAreaNode:" + this.maxAreaNode + " parent: " + this.maxAreaParentNode + "}"
+  }
 }
 
 export class BVHNode extends BVHRect {
@@ -59,7 +68,23 @@ export class BVHNode extends BVHRect {
     return acc;
   }
 
-  splitRandom(strokeColor:string="rgba(255,255,255,1)"):boolean {
+  maxAreaChild(level:number=0, parent:BVHNode=null):MaxAreaNode {
+    let maxAreaNode:MaxAreaNode = new MaxAreaNode(this.w * this.h, this, parent);
+    let maxChildArea:number = -1;
+    if (this.size() > 0) {
+      this.allChildren(child => {
+        let childNode:MaxAreaNode = child.maxAreaChild(level+1,this);
+        if (maxChildArea < childNode.area) {
+          maxAreaNode = childNode;
+          maxChildArea = childNode.area;
+        }
+      });
+    }
+    return maxAreaNode;
+  }
+
+  splitRandom(renderer:BVHRenderer,strokeColor:string="rgba(255,255,255,1)"):boolean {
+    let rv:boolean = false;
     const [splitMin, splitMax] = [0.25, 0.75]; // Minimum/Maximum split are 25%/75% of width and height
     let [wmin,hmin] = [this.w * splitMin,
                        this.h * splitMin];
@@ -68,7 +93,9 @@ export class BVHNode extends BVHRect {
     let [splitx,splity] = [Rand.rand(Math.max(1, wmin), wmax),
                            Rand.rand(Math.max(1, hmin), hmax)];
     let [xmin,ymin] = [Math.min(splitx, this.w-splitx),Math.min(splity, this.h-splity)];
-    if (xmin >= minDimension && ymin >= minDimension) {
+    let maxAspectRatio:number = Math.max(splitx/splity, splity/splitx);
+    rv = xmin >= minDimension && ymin >= minDimension && maxAspectRatio < 4;
+    if (rv) {
       this.addChild(new BVHNode(this.x,          this.y,          splitx-1     , splity-1));
       this.addChild(new BVHNode(this.x + splitx, this.y,          this.w-splitx, splity-1));
       this.addChild(new BVHNode(this.x,          this.y + splity, splitx-1     , this.h-splity));
@@ -77,19 +104,15 @@ export class BVHNode extends BVHRect {
         child.stroke = strokeColor;
         child.fill = Rand.colorRand();
       });
-      return true;
-    } else {
-      return false;
+      this.allChildren(child => { renderer.renderRect(child); });
     }
+    return rv;
   }
 
   splitNode(renderer:BVHRenderer, strokeColor:string="rgba(255,255,255,1)"):boolean {
     let s = this.size();
     if (s == 0) {
-      let rv = this.splitRandom(strokeColor);  // Terminal condition.
-      if (rv) {
-        this.allChildren(child => { renderer.render(child); });
-      }
+      let rv = this.splitRandom(renderer, strokeColor);  // Terminal condition.
       return rv;
     } else {
       return this.randomChild().splitNode(renderer, strokeColor);
@@ -105,11 +128,16 @@ export class BVHNode extends BVHRect {
       if (childrenRemoved == 0) {
           child.fill = this.fill;
           child.stroke = strokeColor;
-          renderer.render(child);
+          // renderer.renderRect(child);
+          renderer.renderX(child);
           this.removeChild(child);
           childrenRemoved++;
       }
     }
     return childrenRemoved;
+  }
+
+  toString() {
+    return "{ rect:" + super.toString() + ", size:" + this.size() + "}";
   }
 }
