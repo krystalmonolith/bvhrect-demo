@@ -49,13 +49,14 @@ export class BVHRectComponent implements OnInit,OnChanges,BVHRenderer {
   static readonly delayMax:number = 1000;
   static readonly delayIntermission:number = 1000;
 
-  static readonly maxNodesPerCycle:number = 2000;
-  static readonly danceIterationMultiplier:number = 5;
+  static readonly initialNodesPerCycle:number = 2000;
+  static readonly danceDelay:number = 2 * 60 * 1000;
 
   // Update loop state varables
   baseDelay:number = BVHRectComponent.delayMin;
   refreshEnable:boolean = true;
   updateSubscription:Subscription;
+  danceSubscription:Subscription;
   phase:Phase = Phase.SPLIT;
 
   // Root node of the BVH tree...
@@ -164,18 +165,26 @@ export class BVHRectComponent implements OnInit,OnChanges,BVHRenderer {
     if (this.refreshEnable) {
       switch (this.phase) {
         case Phase.SPLIT:
-          if (++this.currentNodes >= BVHRectComponent.maxNodesPerCycle) {
+          if (this.currentNodes >= BVHRectComponent.initialNodesPerCycle) {
             this.phase = Phase.DANCE;
             this.maxNodes = this.currentNodes;
+            this.maxNodes = this.currentNodes;
+            this.danceSubscription = Observable.of(0).delay(BVHRectComponent.danceDelay).subscribe(
+              unused => this.phase = Phase.JOIN
+            )
           } else {
-            this.splitRandom();
+           this.splitRandom();
           }
           break;
         case Phase.DANCE:
-          if (this.currentNodes >= BVHRectComponent.danceIterationMultiplier * this.maxNodes) {
-            this.phase = Phase.JOIN;
-          } else {
+          if (this.currentNodes > 0) {
             this.letsDance();
+          } else {
+            if (this.danceSubscription != null) {
+              this.danceSubscription.unsubscribe();
+              this.danceSubscription = null;
+            }
+            this.phase = Phase.JOIN;
           }
           break;
         case Phase.JOIN:
@@ -233,35 +242,23 @@ export class BVHRectComponent implements OnInit,OnChanges,BVHRenderer {
     let maxAreaNode:MaxAreaNode = this.model.maxAreaChild();
     let rv:boolean = false
     for (let splitTries = BVHRectComponent.maxSplitTries; !rv && splitTries > 0; splitTries--) {
-      rv = maxAreaNode.maxAreaNode.splitRandom(this, strokeColor);
+      rv = maxAreaNode.node.splitRandom(this, strokeColor);
     }
     return new SplitBiggestStatus(rv, maxAreaNode);
   }
 
   join(strokeColor:string="rgba(0,0,0,1)"):void {
-    let startPhase = this.phase;
-    for (let i=0; i<BVHRectComponent.maxJoinTries && this.phase == startPhase; i++) {
-      if (this.model.joinNode(this, strokeColor) == 0) {
-        this.phase = Phase.INTERMISSION;
-      }
+    if (!this.model.joinNode(this, strokeColor)) {
+      this.phase = Phase.INTERMISSION;
     }
   }
 
   letsDance(): void {
-    // let dnodes = this.maxNodes - this.currentNodes;
-    // if (dnodes > 0) {
-    if (Rand.rand(0,20)) {
-      let splitStat:SplitBiggestStatus = this.splitBiggest("rgba(255,0,0,1)");
-      console.log("SS: " + splitStat);
-      if (!splitStat.split) {
-        if (splitStat.maxAreaNode.maxAreaParentNode) {
-          splitStat.maxAreaNode.maxAreaParentNode.joinNode(this, "rgba(0,0,0,1)");
-        // } else {
-        //   this.join("rgba(0,0,0,1)");
-        }
+    let splitStat:SplitBiggestStatus = this.splitBiggest("rgba(255,0,0,1)");
+    if (!splitStat.split) {
+      if (splitStat.maxAreaNode.parent) {
+        splitStat.maxAreaNode.parent.joinNode(this, "rgba(0,0,0,1)");
       }
-    } else {
-      this.join("rgba(0,0,255,1)");
     }
   }
 
@@ -275,10 +272,10 @@ export class BVHRectComponent implements OnInit,OnChanges,BVHRenderer {
       ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
   }
 
-  renderX(rect:BVHNode):void {
+  renderX(rect:BVHNode, fillStyle:string="#FFFFFF", strokeStyle:string="#000000"):void {
       let ctx = this.getGC();
-      ctx.fillStyle = "#FFFFFF";
-      ctx.strokeStyle = "#000000";
+      ctx.fillStyle = fillStyle;
+      ctx.strokeStyle = strokeStyle;
       ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
       ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
       ctx.beginPath();
