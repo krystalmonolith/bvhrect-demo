@@ -4,17 +4,17 @@ import { Observable, Subscription } from 'rxjs';
 import { Rand } from '../util/rand';
 import { BVHNode, BVHRenderer, MaxAreaNode } from './bvhrect.node';
 
-enum Phase {
+export enum Phase {
   SPLIT,
   DANCE,
   JOIN,
   INTERMISSION
 }
 
-class SplitBiggestStatus {
-  constructor(public readonly split:boolean, public readonly maxAreaNode:MaxAreaNode) {}
+export class SplitBiggestStatus {
+  constructor(public readonly split:boolean, public readonly man:MaxAreaNode) {}
   toString():string {
-    return "{ split: " + this.split + " " + this.maxAreaNode.toString() + "}"
+    return "{ split: " + this.split + " " + this.man.node.toString() + "}"
   }
 }
 
@@ -87,6 +87,7 @@ export class BVHRectComponent implements OnInit,OnChanges,BVHRenderer {
 
   updateClientRect() {
       this.model = new BVHNode(
+          null,
           this.graphWidth  * BVHRectComponent.padOuter,
           this.graphHeight * BVHRectComponent.padOuter,
           this.graphWidth  * BVHRectComponent.padInner,
@@ -188,6 +189,7 @@ export class BVHRectComponent implements OnInit,OnChanges,BVHRenderer {
           }
           break;
         case Phase.JOIN:
+          BVHNode.resetRejects();
           this.join();
           break;
         case Phase.INTERMISSION:
@@ -240,10 +242,7 @@ export class BVHRectComponent implements OnInit,OnChanges,BVHRenderer {
 
   splitBiggest(strokeColor:string=Rand.colorRand()):SplitBiggestStatus {
     let maxAreaNode:MaxAreaNode = this.model.maxAreaChild();
-    let rv:boolean = false
-    for (let splitTries = BVHRectComponent.maxSplitTries; !rv && splitTries > 0; splitTries--) {
-      rv = maxAreaNode.node.splitRandom(this, strokeColor);
-    }
+    let rv:boolean = maxAreaNode.node.splitRandom(this, strokeColor);
     return new SplitBiggestStatus(rv, maxAreaNode);
   }
 
@@ -254,10 +253,13 @@ export class BVHRectComponent implements OnInit,OnChanges,BVHRenderer {
   }
 
   letsDance(): void {
-    let splitStat:SplitBiggestStatus = this.splitBiggest("rgba(255,0,0,1)");
+    let splitStat:SplitBiggestStatus = this.splitBiggest();
     if (!splitStat.split) {
-      if (splitStat.maxAreaNode.parent) {
-        splitStat.maxAreaNode.parent.joinNode(this, "rgba(0,0,0,1)");
+      let node = splitStat.man.node;
+      if (!node.splitFixed(this)) {
+        node.randomColors();
+        this.renderRect(node);
+        BVHNode.addReject(node);
       }
     }
   }

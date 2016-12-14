@@ -9,23 +9,42 @@ export interface BVHRenderer {
 }
 
 export class MaxAreaNode {
-  constructor(public area:number, public readonly node:BVHNode, public readonly parent:BVHNode) {}
+  constructor(public area:number, public readonly node:BVHNode) {}
 
   toString():string {
-    return "{ area:" + this.area + " node:" + this.node + " parent: " + this.parent + "}"
+    return "{ area:" + this.area + " node:" + this.node + " parent: " + this.node.getParent() + "}"
   }
 }
 
 export class BVHNode extends BVHRect {
 
+  private _parent:BVHNode;
   private _children:BVHNode[] = [];
+  private static splitRejects:BVHNode[] = [];
 
-  constructor(x:number=0, y:number=0, w:number=0, h:number=0) {
+  constructor(parent:BVHNode, x:number=0, y:number=0, w:number=0, h:number=0) {
     super(x,y,w,h);
+    this._parent = parent;
+  }
+
+  getParent():BVHNode {
+    return this._parent;
   }
 
   size():number {
     return this._children.length;
+  }
+
+  static resetRejects():void {
+    BVHNode.splitRejects.length = 0;
+  }
+
+  static addReject(node:BVHNode):void {
+    BVHNode.splitRejects.push(node);
+  }
+
+  static isReject(node:BVHNode):boolean {
+    return BVHNode.splitRejects.indexOf(node) >= 0;
   }
 
   randomChild():BVHNode {
@@ -53,9 +72,20 @@ export class BVHNode extends BVHRect {
     this._children.length = 0;
   }
 
-  randomColors():void {
+  randomColors():BVHNode {
     this.randomFill();
     this.randomStroke();
+    return this;
+  }
+
+  setFill(fill:string):BVHNode {
+    this.fill = fill;
+    return this;
+  }
+
+  setStroke(stroke:string):BVHNode {
+    this.stroke = stroke;
+    return this;
   }
 
   allChildren(cfunc:(rchild:BVHNode) => any) {
@@ -78,37 +108,47 @@ export class BVHNode extends BVHRect {
   }
 
   maxAreaChild(level:number=0, parent:BVHNode=null):MaxAreaNode {
-    let maxAreaNode:MaxAreaNode = new MaxAreaNode(this.w * this.h, this, parent);
+    let maxAreaNode:MaxAreaNode = new MaxAreaNode(this.w * this.h, this);
     let maxChildArea:number = -1;
     if (this.size() > 0) {
       this.allChildren(child => {
-        let childNode:MaxAreaNode = child.maxAreaChild(level+1,this);
-        if (maxChildArea < childNode.area) {
-          maxAreaNode = childNode;
-          maxChildArea = childNode.area;
+        if (!BVHNode.isReject(child)) {
+          let childNode:MaxAreaNode = child.maxAreaChild(level+1,this);
+          if (maxChildArea < childNode.area) {
+            maxAreaNode = childNode;
+            maxChildArea = childNode.area;
+          }
         }
       });
     }
     return maxAreaNode;
   }
 
-  splitFixed(renderer:BVHRenderer, maxDepth:number=3):void {
-    let c1 = (96 + maxDepth * 32) % 256;
-    let c2 = "rgba(" + c1 + "," + c1 + "," + c1 + ",1)"
-    renderer.renderX(this, c2);
+  splitFixed(renderer:BVHRenderer, maxDepth:number=1):boolean {
+    let rv:boolean = false;
     let childDepth = maxDepth - 1;
     if (childDepth >= 0) {
-      const ratio:number = 0.4;
+      const ratio:number = 0.5;
       let w1 = Math.floor(this.w * ratio);
       let h1 = Math.floor(this.h * ratio);
-      this.addChild(new BVHNode(this.x,      this.y,      w1-1,      h1-1));
-      this.addChild(new BVHNode(this.x + w1, this.y,      this.w-w1, h1-1));
-      this.addChild(new BVHNode(this.x,      this.y + h1, w1-1,      this.h-h1));
-      this.addChild(new BVHNode(this.x + w1, this.y + h1, this.w-w1, this.h-h1));
+      if (w1 >= minDimension && h1 >= minDimension) {
+        let w2 = this.w - w1;
+        let h2 = this.h - h1;
+        if (w1 >= h1) {
+          this.addChild(new BVHNode(this, this.x,      this.y,      w1,     this.h).randomColors());
+          this.addChild(new BVHNode(this, this.x + w1, this.y,      w2,     this.h).randomColors());
+        } else {
+          this.addChild(new BVHNode(this, this.x,      this.y,      this.w, h1).randomColors());
+          this.addChild(new BVHNode(this, this.x,      this.y + h1, this.w, h2).randomColors());
+        }
         this.allChildren(child => {
+          renderer.renderRect(child);
           child.splitFixed(renderer, childDepth);
-      });
+        });
+        rv = true;
+      }
     }
+    return rv;
   }
 
   splitRandom(renderer:BVHRenderer,strokeColor:string="rgba(255,255,255,1)"):boolean {
@@ -118,22 +158,25 @@ export class BVHNode extends BVHRect {
                        this.h * splitMin];
     let [wmax,hmax] = [(this.w-1) * splitMax,
                        (this.h-1) * splitMax];
-    let [w1,splity] = [Rand.rand(Math.max(1, wmin), wmax),
-                           Rand.rand(Math.max(1, hmin), hmax)];
-    let [xmin,ymin] = [Math.min(w1, this.w-w1),Math.min(splity, this.h-splity)];
-    let maxAspectRatio:number = Math.max(w1/splity, splity/w1);
+    let [splitx,splity] = [Rand.rand(Math.max(1, wmin), wmax),
+                       Rand.rand(Math.max(1, hmin), hmax)];
+    let [xmin,ymin] = [Math.min(splitx, this.w-splitx),Math.min(splity, this.h-splity)];
+    let maxAspectRatio:number = Math.max(splitx/splity, splity/splitx);
     rv = xmin >= minDimension && ymin >= minDimension && maxAspectRatio < 4;
     if (rv) {
       this.removeAllChildren();
-      this.addChild(new BVHNode(this.x,          this.y,          w1-1     , splity-1));
-      this.addChild(new BVHNode(this.x + w1, this.y,          this.w-w1, splity-1));
-      this.addChild(new BVHNode(this.x,          this.y + splity, w1-1     , this.h-splity));
-      this.addChild(new BVHNode(this.x + w1, this.y + splity, this.w-w1, this.h-splity));
+      this.addChild(new BVHNode(this, this.x,          this.y,          splitx-1     , splity-1));
+      this.addChild(new BVHNode(this, this.x + splitx, this.y,          this.w-splitx, splity-1));
+      this.addChild(new BVHNode(this, this.x,          this.y + splity, splitx-1     , this.h-splity));
+      this.addChild(new BVHNode(this, this.x + splitx, this.y + splity, this.w-splitx, this.h-splity));
       this.allChildren(child => {
         child.stroke = strokeColor;
         child.fill = Rand.colorRand();
       });
       this.allChildren(child => { renderer.renderRect(child); });
+    }
+    if (!rv) {
+      console.log("SPLITFAIL:" + this + " sxy(" + splitx + "," + splity + ") minxy(" + xmin + "," + ymin + ") ar:" + Math.round(maxAspectRatio * 10)/10)
     }
     return rv;
   }
@@ -156,8 +199,8 @@ export class BVHNode extends BVHRect {
       childRemoved = child.joinNode(renderer, strokeColor);
       if (!childRemoved) {
           this.removeChild(child);
-//          this.renderNode(renderer);
-          renderer.renderX(child);
+          this.setStroke(strokeColor)
+          this.renderNode(renderer);
           childRemoved = true;
       }
     }
