@@ -1,5 +1,7 @@
-<div #graphdiv class="bvhrect-div"
-     (window:resize)="setGraphHeight(graphdiv)"
-     (onload)="setGraphHeight(graphdiv)">
-  <g2d-bvhrect class="graph-component" [graphWidth]="graphWidth" [graphHeight]="graphHeight"></g2d-bvhrect>
+<div
+  #graphdiv
+  class="bvhrect-div"
+  (window:resize)="setGraphSize(graphdiv)"
+  (onload)="setGraphSize(graphdiv)">
+    <g2d-bvhrect class="graph-component" [graphWidth]="graphWidth" [graphHeight]="graphHeight"></g2d-bvhrect>
 </div>

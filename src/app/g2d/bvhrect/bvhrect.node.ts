@@ -224,17 +224,12 @@ export class BVHNode extends BVHRect {
       });
       this.allChildren(child => { renderer.renderRect(child); });
     }
-    // if (!rv) {
-    //   console.log("SPLITFAIL:" + this + " sxy(" + splitx + "," + splity + ") minxy(" + xmin + "," + ymin + ") ar:" + Math.round(maxAspectRatio * 10)/10)
-    // }
     return rv;
   }
 
   splitNode(renderer:BVHRenderer, strokeColor:string="rgba(255,255,255,1)"):boolean {
-    let s = this.size();
-    if (s == 0) {
-      let rv = this.splitRandom(renderer, strokeColor);  // Terminal condition.
-      return rv;
+    if (this.size() == 0) {
+      return this.splitRandom(renderer, strokeColor);  // Terminal condition.
     } else {
       return this.randomChild().splitNode(renderer, strokeColor);
     }
@@ -242,8 +237,7 @@ export class BVHNode extends BVHRect {
 
   joinNode(renderer:BVHRenderer, strokeColor:string="rgba(0,0,0,1)"):boolean {
     let childRemoved = false;
-    let s = this.size();
-    if (s > 0) {
+    if (this.size() > 0) {
       let child:BVHNode = this.randomChild();
       childRemoved = child.joinNode(renderer, strokeColor);
       if (!childRemoved) {

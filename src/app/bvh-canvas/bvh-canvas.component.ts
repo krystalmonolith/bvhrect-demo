@@ -38,12 +38,7 @@ export class BVHCanvasComponent implements OnInit, AfterContentChecked {
     }
   }
 
-  logElementRect(sourceClassName:string, title:string):void {
-    title += "|" + sourceClassName + ": ";
-    console.log(title + this.getElementRect(sourceClassName));
-  }
-
-  setGraphHeight(canvasElement: any) {
+  setGraphSize(canvasElement: any) {
     this.updateGraphSize();
   }
 

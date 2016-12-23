@@ -31,7 +31,7 @@ export class BVHRectComponent implements OnInit,OnChanges,BVHRenderer {
 
   static readonly mouseDelayDebounceMsec = 20;
   static readonly mousePauseDebounceMsec = 10;
-  static readonly hitTestDelay = 5000;
+  static readonly hitTestDisplayDuration = 5000;
 
   static readonly padPercent = 2;
   static readonly padOuter = BVHRectComponent.padPercent / 100 / 2;
@@ -104,25 +104,29 @@ export class BVHRectComponent implements OnInit,OnChanges,BVHRenderer {
       this.maxNodes = 0;
   }
 
+  mouseCoordinates(e: MouseEvent):number[] {
+    let rect = this.canvas.nativeElement.getBoundingClientRect();
+    let rv:number[] = [];
+    rv.push(Math.floor(e.clientX - rect.left));
+    rv.push(Math.floor(e.clientY - rect.top));
+    return rv;
+  }
+
   updateHitTest(e:MouseEvent):void {
-    let x = e.offsetX;
-    let y = e.offsetY;
-    // let clipped = x < 0 || x >= this.model.w || y < 0 || y >= this.model.h;
-    // if (!clipped) {
-      this.hitTestNode = this.model.hitTest(x,y);
-      this.updateStatusLine();
-      if (this.hitTestSubscription) {
-        this.hitTestSubscription.unsubscribe();
-      }
-      this.hitTestSubscription =
-        Observable
-          .of(0)
-          .delay(BVHRectComponent.hitTestDelay)
-          .subscribe(v => {
-            this.hitTestNode = null;
-            this.updateStatusLine();
-          });
-    // }
+    let [x,y] = this.mouseCoordinates(e);
+    this.hitTestNode = this.model.hitTest(x,y);
+    this.updateStatusLine();
+    if (this.hitTestSubscription) {
+      this.hitTestSubscription.unsubscribe();
+    }
+    this.hitTestSubscription =
+      Observable
+        .of(0)
+        .delay(BVHRectComponent.hitTestDisplayDuration)
+        .subscribe(v => {
+          this.hitTestNode = null;
+          this.updateStatusLine();
+        });
   }
 
   mouseDelay() {
@@ -130,8 +134,7 @@ export class BVHRectComponent implements OnInit,OnChanges,BVHRenderer {
     .filter((e:MouseEvent, i:number) => { return e.shiftKey && !e.ctrlKey && this.model && this.model.w > 0; })
     .debounceTime(BVHRectComponent.mouseDelayDebounceMsec)
     .subscribe((e:MouseEvent) => {
-      let x = e.offsetX - this.model.x;
-      let y = e.offsetY - this.model.y;
+      let [x,y] = this.mouseCoordinates(e);
       this.baseDelay = BVHRectComponent.delayMin + (BVHRectComponent.delayMax - BVHRectComponent.delayMin) * Math.min(Math.max(0,x/this.model.w),BVHRectComponent.delayMin);
       this.baseDelay = Math.max(1,Math.floor(this.baseDelay))
       this.stopUpdate();
@@ -347,7 +350,7 @@ export class BVHRectComponent implements OnInit,OnChanges,BVHRenderer {
     let xoff:number = spacing;
     let bgh = BVHRectComponent.statusLineHeight;
     let bgy = Math.floor(this.graphHeight - bgh - spacing);
-    ctx.clearRect(this.model.x, bgy, this.model.w, bgh);
+    ctx.clearRect(0, bgy, this.graphWidth, bgh);
     let y = bgy + 2 * spacing;
     ctx.font = font;
     ctx.textAlign = "left";
