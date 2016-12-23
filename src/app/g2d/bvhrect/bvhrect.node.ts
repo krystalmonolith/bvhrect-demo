@@ -12,7 +12,23 @@ export class MaxAreaNode {
   constructor(public area:number, public readonly node:BVHNode) {}
 
   toString():string {
-    return "{ area:" + this.area + " node:" + this.node + " parent: " + this.node.getParent() + "}"
+    return "{area:" + this.area + " node:" + this.node + " parent: " + this.node.getParent() + "}"
+  }
+}
+
+export class HitTestResult {
+  constructor(public readonly x:number, public readonly y:number, public readonly level:number, public readonly node:BVHNode) {}
+
+  toString():string {
+    return "Mouse at (" + this.x + "," + this.y + ") Level[" + this.level + "] " + this.node;
+  }
+
+  format():string[] {
+    let rv:string[] = [];
+    rv.push("(" + this.x + "," + this.y + ")");
+    rv.push("Level " + this.level);
+    rv.push(this.node.toString());
+    return rv;
   }
 }
 
@@ -22,9 +38,15 @@ export class BVHNode extends BVHRect {
   private _children:BVHNode[] = [];
   private static splitRejects:BVHNode[] = [];
 
+  private hit:HitTestResult; // Only set by hitTest().
+
   constructor(parent:BVHNode, x:number=0, y:number=0, w:number=0, h:number=0) {
     super(x,y,w,h);
     this._parent = parent;
+  }
+
+  getHit():HitTestResult { // Only valid after successfull hitTest() !!!
+    return this.hit;
   }
 
   getParent():BVHNode {
@@ -92,6 +114,14 @@ export class BVHNode extends BVHRect {
     this._children.forEach(child => cfunc(child) )
   }
 
+  someChildren(cfunc:(rchild:BVHNode) => boolean):boolean {
+    let rv = true;
+    for (let i:number = 0; rv && i < this.size(); i++) {
+        rv = cfunc(this._children[i]);
+    }
+    return rv;
+  }
+
   randomizeAllChildren():void {
     this.allChildren(child => child.randomColors());
   }
@@ -107,12 +137,31 @@ export class BVHNode extends BVHRect {
       this.allChildren(child => child.renderNode(renderer));
   }
 
+  hitTest(x:number, y:number, level:number=0):BVHNode {
+    let rv:BVHNode;
+    if (x >= this.x && x < (this.x + this.w) &&
+        y >= this.y && y < (this.y + this.h)) {
+      rv = this;
+      this.hit = new HitTestResult(x,y,level++,this);
+      this.someChildren(child => {
+        let childResult:BVHNode = child.hitTest(x,y, level);
+        if (childResult) {
+          rv = childResult;
+        }
+        return !childResult;
+      });
+    } else {
+      this.hit = null;
+    }
+    return rv;
+  }
+
   maxAreaChild(level:number=0, parent:BVHNode=null):MaxAreaNode {
     let maxAreaNode:MaxAreaNode = new MaxAreaNode(this.w * this.h, this);
     let maxChildArea:number = -1;
     if (this.size() > 0) {
       this.allChildren(child => {
-        if (!BVHNode.isReject(child)) {
+        if (!BVHNode.isReject(child)) { // No Sociological Connotations here...
           let childNode:MaxAreaNode = child.maxAreaChild(level+1,this);
           if (maxChildArea < childNode.area) {
             maxAreaNode = childNode;
@@ -175,9 +224,9 @@ export class BVHNode extends BVHRect {
       });
       this.allChildren(child => { renderer.renderRect(child); });
     }
-    if (!rv) {
-      console.log("SPLITFAIL:" + this + " sxy(" + splitx + "," + splity + ") minxy(" + xmin + "," + ymin + ") ar:" + Math.round(maxAspectRatio * 10)/10)
-    }
+    // if (!rv) {
+    //   console.log("SPLITFAIL:" + this + " sxy(" + splitx + "," + splity + ") minxy(" + xmin + "," + ymin + ") ar:" + Math.round(maxAspectRatio * 10)/10)
+    // }
     return rv;
   }
 
@@ -208,6 +257,6 @@ export class BVHNode extends BVHRect {
   }
 
   toString() {
-    return "{ rect:" + super.toString() + ", size:" + this.size() + "}";
+    return super.toString() + ", children:" + this.size();
   }
 }

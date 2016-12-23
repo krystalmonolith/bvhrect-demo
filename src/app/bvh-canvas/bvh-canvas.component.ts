@@ -24,13 +24,18 @@ export class BVHCanvasComponent implements OnInit, AfterContentChecked {
     ** Observable instance is next(elrect) for all elementArray
     ** with a final complete() instead of being singularly return'ed.
     */
-    if (elementArray && elementArray.length > 0) {
-      let elrect = elementArray[0].getBoundingClientRect();
-      if (elrect) {
-        return new Rect(elrect.x, elrect.y, elrect.width, elrect.height);
+    if (elementArray) {
+      if (elementArray.length > 0) {
+        let elrect = elementArray[0].getBoundingClientRect();
+        if (elrect) {
+          return new Rect(elrect.x, elrect.y, elrect.width, elrect.height);
+        }
+      } else {
+        throw "class \"" + sourceClassName + "\" returned zero elements";
       }
+    } else {
+      throw "class \"" + sourceClassName + "\" returned null";
     }
-    return new Rect();
   }
 
   logElementRect(sourceClassName:string, title:string):void {

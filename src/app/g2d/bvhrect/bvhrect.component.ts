@@ -2,12 +2,12 @@ import { Component, OnInit, OnChanges, Input, ViewChild, ElementRef } from '@ang
 import { Observable, Subscription } from 'rxjs';
 
 import { Rand } from '../util/rand';
-import { BVHNode, BVHRenderer, MaxAreaNode } from './bvhrect.node';
+import { BVHNode, BVHRenderer, MaxAreaNode, HitTestResult } from './bvhrect.node';
 
 export enum Phase {
-  SPLIT,
-  DANCE,
-  JOIN,
+  SplitRandom,
+  HuntBiggest,
+  JoinRandom,
   INTERMISSION
 }
 
@@ -29,7 +29,9 @@ export class BVHRectComponent implements OnInit,OnChanges,BVHRenderer {
   @Input() graphWidth: number = 0;
   @Input() graphHeight:number = 0;
 
-  static readonly mouseDebounceMsec = 20;
+  static readonly mouseDelayDebounceMsec = 20;
+  static readonly mousePauseDebounceMsec = 10;
+  static readonly hitTestDelay = 5000;
 
   static readonly padPercent = 2;
   static readonly padOuter = BVHRectComponent.padPercent / 100 / 2;
@@ -50,19 +52,23 @@ export class BVHRectComponent implements OnInit,OnChanges,BVHRenderer {
   static readonly delayIntermission:number = 1000;
 
   static readonly initialNodesPerCycle:number = 2000;
-  static readonly danceDelay:number = 2 * 60 * 1000;
+  static readonly danceDelay:number = 60 * 1000;
 
   // Update loop state varables
   baseDelay:number = BVHRectComponent.delayMin;
   refreshEnable:boolean = true;
   updateSubscription:Subscription;
   danceSubscription:Subscription;
-  phase:Phase = Phase.SPLIT;
+  phase:Phase = Phase.SplitRandom;
 
   // Root node of the BVH tree...
   model:BVHNode;
   currentNodes:number = 0;
   maxNodes:number = 0;
+
+  // PAUSE mode hit test node or null
+  hitTestNode:BVHNode;
+  hitTestSubscription:Subscription;
 
   constructor() {
     this.updateClientRect();
@@ -81,7 +87,7 @@ export class BVHRectComponent implements OnInit,OnChanges,BVHRenderer {
     return this.canvas.nativeElement.getContext("2d");
   }
 
-  toggleSplit():void {
+  toggleRefreshEnable():void {
     this.refreshEnable = !this.refreshEnable;
   }
 
@@ -94,23 +100,48 @@ export class BVHRectComponent implements OnInit,OnChanges,BVHRenderer {
           this.graphHeight * BVHRectComponent.padInner - BVHRectComponent.statusLineHeight);
       this.model.floor();
       this.baseDelay = BVHRectComponent.delayMin;
-      this.phase = Phase.SPLIT;
+      this.phase = Phase.SplitRandom;
       this.maxNodes = 0;
+  }
+
+  updateHitTest(e:MouseEvent):void {
+    let x = e.offsetX;
+    let y = e.offsetY;
+    // let clipped = x < 0 || x >= this.model.w || y < 0 || y >= this.model.h;
+    // if (!clipped) {
+      this.hitTestNode = this.model.hitTest(x,y);
+      this.updateStatusLine();
+      if (this.hitTestSubscription) {
+        this.hitTestSubscription.unsubscribe();
+      }
+      this.hitTestSubscription =
+        Observable
+          .of(0)
+          .delay(BVHRectComponent.hitTestDelay)
+          .subscribe(v => {
+            this.hitTestNode = null;
+            this.updateStatusLine();
+          });
+    // }
   }
 
   mouseDelay() {
     Observable.fromEvent(this.canvas.nativeElement, 'mousemove')
-    .filter((e:MouseEvent, i:number) => { return e.shiftKey && !e.ctrlKey; })
-    .debounceTime(BVHRectComponent.mouseDebounceMsec)
+    .filter((e:MouseEvent, i:number) => { return e.shiftKey && !e.ctrlKey && this.model && this.model.w > 0; })
+    .debounceTime(BVHRectComponent.mouseDelayDebounceMsec)
     .subscribe((e:MouseEvent) => {
-      let x = e.offsetX;
-      let y = e.offsetY;
-      if (this.model.w > 0) {
-        this.baseDelay = BVHRectComponent.delayMin + (BVHRectComponent.delayMax - BVHRectComponent.delayMin) * Math.min(Math.max(0,x/this.model.w),1);
-        this.baseDelay = Math.max(1,Math.floor(this.baseDelay))
-        this.stopUpdate();
-        this.startUpdate();
-      }
+      let x = e.offsetX - this.model.x;
+      let y = e.offsetY - this.model.y;
+      this.baseDelay = BVHRectComponent.delayMin + (BVHRectComponent.delayMax - BVHRectComponent.delayMin) * Math.min(Math.max(0,x/this.model.w),BVHRectComponent.delayMin);
+      this.baseDelay = Math.max(1,Math.floor(this.baseDelay))
+      this.stopUpdate();
+      this.startUpdate();
+    });
+    Observable.fromEvent(this.canvas.nativeElement, 'mousemove')
+    .filter((e:MouseEvent, i:number) => { return !this.refreshEnable && this.model && this.model.w > 0; })
+    .debounceTime(BVHRectComponent.mousePauseDebounceMsec)
+    .subscribe((e:MouseEvent) => {
+      this.updateHitTest(e);
     });
   }
 
@@ -118,13 +149,13 @@ export class BVHRectComponent implements OnInit,OnChanges,BVHRenderer {
     if (event.ctrlKey && !event.shiftKey) {
       this.refreshEnable = false;
       switch (this.phase) {
-        case Phase.SPLIT:
+        case Phase.SplitRandom:
           this.model.splitNode(this);
           break;
-        case Phase.DANCE:
+        case Phase.HuntBiggest:
           this.letsDance();
           break;
-        case Phase.JOIN:
+        case Phase.JoinRandom:
           this.model.joinNode(this);
           break;
       }
@@ -132,16 +163,30 @@ export class BVHRectComponent implements OnInit,OnChanges,BVHRenderer {
       this.updateClientRect();
       this.getGC().clearRect(this.model.x, this.model.y, this.model.w, this.model.h);
     } else if (!event.shiftKey){
-      this.toggleSplit();
+      this.toggleRefreshEnable();
+      if (this.refreshEnable) {
+        this.hitTestNode = null;
+      } else {
+        this.updateHitTest(event);
+      }
     }
+  }
+
+  canvasBlur(event:FocusEvent) {
+    this.hitTestNode = null;
+    this.refreshEnable = null;
     this.updateStatusLine();
   }
 
   updateStatusLine():void {
     this.currentNodes = this.model.countChildren();
-    let states = [ Phase[this.phase], this.currentNodes.toString() ];
+    let states:string[] = [ Phase[this.phase], this.currentNodes.toString() ];
     if (!this.refreshEnable) {
       states.push("PAUSE");
+    }
+    if (this.hitTestNode) {
+      let hit:HitTestResult = this.hitTestNode.getHit();
+      hit.format().forEach(s => states.push(s));
     }
     this.renderStatusLine(states);
   }
@@ -149,8 +194,8 @@ export class BVHRectComponent implements OnInit,OnChanges,BVHRenderer {
   calculateDelay():number {
     let exponent:number;
     switch (this.phase) {
-      case Phase.SPLIT:
-      case Phase.JOIN:
+      case Phase.SplitRandom:
+      case Phase.JoinRandom:
         exponent = this.currentNodes;
         let ddelay = Math.floor(BVHRectComponent.delayK1 * Math.exp(-exponent * BVHRectComponent.delayK2)); // Note the *negative* exponent!
         let cdelay = this.baseDelay + ddelay;
@@ -165,19 +210,19 @@ export class BVHRectComponent implements OnInit,OnChanges,BVHRenderer {
     ctx.save();
     if (this.refreshEnable) {
       switch (this.phase) {
-        case Phase.SPLIT:
+        case Phase.SplitRandom:
           if (this.currentNodes >= BVHRectComponent.initialNodesPerCycle) {
-            this.phase = Phase.DANCE;
+            this.phase = Phase.HuntBiggest;
             this.maxNodes = this.currentNodes;
             this.maxNodes = this.currentNodes;
             this.danceSubscription = Observable.of(0).delay(BVHRectComponent.danceDelay).subscribe(
-              unused => this.phase = Phase.JOIN
+              unused => this.phase = Phase.JoinRandom
             )
           } else {
            this.splitRandom();
           }
           break;
-        case Phase.DANCE:
+        case Phase.HuntBiggest:
           if (this.currentNodes > 0) {
             this.letsDance();
           } else {
@@ -185,10 +230,10 @@ export class BVHRectComponent implements OnInit,OnChanges,BVHRenderer {
               this.danceSubscription.unsubscribe();
               this.danceSubscription = null;
             }
-            this.phase = Phase.JOIN;
+            this.phase = Phase.JoinRandom;
           }
           break;
-        case Phase.JOIN:
+        case Phase.JoinRandom:
           BVHNode.resetRejects();
           this.join();
           break;
@@ -196,7 +241,7 @@ export class BVHRectComponent implements OnInit,OnChanges,BVHRenderer {
           this.refreshEnable = false;
           Observable.of(0).delay(BVHRectComponent.delayIntermission).subscribe(n => {
             ctx.clearRect(this.model.x, this.model.y, this.model.w, this.model.h);
-            this.phase = Phase.SPLIT;
+            this.phase = Phase.SplitRandom;
             this.refreshEnable = true;
           });
           break;
@@ -291,7 +336,7 @@ export class BVHRectComponent implements OnInit,OnChanges,BVHRenderer {
   }
 
   renderStatusLine(txt:string[],
-                   font:string="16px Impact",
+                   font:string="16px Courier",
                    fillStyle:string="rgba(255,255,255,1)",
                    strokeStyle:string="rgba(255,255,255,1)",
                    bgStyle:string="rgba(0,0,0,1)",

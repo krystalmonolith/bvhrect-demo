@@ -6,5 +6,5 @@ import { Component } from '@angular/core';
   styleUrls: ['./app.component.sass']
 })
 export class AppComponent {
-  title = 'BVH Rectangle Demo';
+  title = '2D BVH Canvas Demo';
 }
